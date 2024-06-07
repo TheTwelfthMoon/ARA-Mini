@@ -1,14 +1,21 @@
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include "esp_camera.h"
+#include <AsyncTCP.h>
+#include <Arduino.h>
+#include <ESPAsyncWebServer.h>
 #include "ARA_ESP.h"
+#include "ProgramHightLevel.h"
 
-#define CAMERA_MODEL_AI_THINKER
+
+#define CAMERA_MODEL_AI_THINKER  // Has PSRAM
+
 #include "camera_pins.h"
 
-const char *ssid = "ARA-Mini_1"; //Имя точки доступа
+const char *ssid = "ARA-Mini_1";
 const char *password = "12345678";  //Пароль от точки доступа
+
+void startCameraServer();
+void setupLedFlash(int pin);
 
 AsyncWebServer server(8775);  //порт подключения
 AsyncWebSocket ws("/ws");     // Вебсокет
@@ -17,8 +24,6 @@ IPAddress local_ip(192, 168, 2, 113);  // Локальный IP-адрес
 IPAddress gateway(192, 168, 2, 113);   // IP-адрес шлюза
 IPAddress subnet(255, 255, 255, 0);    // Маска подсети
 
-void startCameraServer(); //функция для запуска камера-сервера
-void setupLedFlash(int pin); // функция для настройки мигания светодиода
 
 //глобальные переменные для хранения значений крена, тангажа, рысканья и дросселя, которые будут получены через веб-сокет.
 int Arm = 0;
@@ -50,23 +55,27 @@ void splitAndConvertToFloat(const String &inputString, float array[], int arrayS
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_DATA) {
-    data[len] = 0;  // Убедитесь, что строка завершается нулем
+    data[len] = 0;  // Ensure null-terminated string
 
+    //Serial.printf("Data received: %s\n", (char*)data);
     String inputString = String((char *)data);
     float values[8];
 
     splitAndConvertToFloat(inputString, values, 8, ';');
 
     Arm = values[0];
-    Nav_state = values[1];
+    Flight_state = values[6];  //6
     YawValue = values[2];
     ThrottleValue = values[3];
     RollValue = values[4];
     PitchValue = values[5];
-    Flight_state = values[6];
+    Nav_state = values[1];
     Programming = values[7];
   }
 }
+
+
+
 
 const char *html1 = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
@@ -333,8 +342,7 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
                             <input class="button toggle-switch" type="radio" name="toggleNavSwitch" data-id="2"/>
                         </div>
                     </div>
-                    <div class="toggles-container"
-                         style="width: 96px; padding-left: 10px; margin: 0 auto 20px; font-size: 9pt">
+                    <div class="toggles-container" style="width: 96px; padding-left: 10px; margin: 0 auto 20px; font-size: 9pt">
                         <div style="flex: 1"></div>
                         <div style="flex: 1">ALT</div>
                         <div style="flex: 1">POS</div>
@@ -353,6 +361,9 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
         <div class="state-button" id="armButton">
             ARM
         </div>
+        <div class="state-button" id="programButton">
+            ПРОГРАММИРОВАНИЕ
+        </div>
     </div>
 </div>
 
@@ -365,6 +376,7 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
     const rightHandle = document.getElementById('right-handle');
     const leftJoystick = document.getElementById('left-joystick');
     const rightJoystick = document.getElementById('right-joystick');
+    console.log(leftHandle)
 
     let allReadings = [0, 1, 0, 0, 0, 0, 1, 0] // [armedButton, navState, LX, LY, RX, RY, flightState, programmingButton]
 
@@ -389,7 +401,6 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
 
         allReadings[shift] = actualReadingX;
         allReadings[shift + 1] = actualReadingY;
-
     }
 
     function hydrateJoystickLeft() {
@@ -488,21 +499,24 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
             ev.target.style.background = 'white'
             ev.target.style.color = 'black'
             allReadings[0] = 0
-            allReadings[1] = 1
-            toggleNavSwitchStates.forEach((el) => {
-                el.style.opacity = "0"
-                if (+el.dataset.id === allReadings[1]) el.style.opacity = "1"
-            })
         } else {
             ev.target.innerText = 'DISARM'
             ev.target.style.background = '#4976c4'
             ev.target.style.color = 'white'
             allReadings[0] = 1
-            allReadings[1] = 2
-            toggleNavSwitchStates.forEach((el) => {
-                el.style.opacity = "0"
-                if (+el.dataset.id === allReadings[1]) el.style.opacity = "1"
-            })
+        }
+    })
+
+    const programButton = document.querySelector('#programButton')
+    programButton.addEventListener('click', (ev) => {
+        if (allReadings[7]) {
+            ev.target.style.background = 'white'
+            ev.target.style.color = 'black'
+            allReadings[7] = 0
+        } else {
+            ev.target.style.background = '#4976c4'
+            ev.target.style.color = 'white'
+            allReadings[7] = 1
         }
     })
 
@@ -522,16 +536,33 @@ const char *html1 = R"rawliteral(<!DOCTYPE html>
     }, sendTimeout)
 
     // STREAM
+
     const stream = document.querySelector('#stream')
+    console.log(stream)
     stream.src = `http://${host}:81/stream`
 </script>
 </body>
 </html>)rawliteral";
 
+int button;
+
+hw_timer_t * timer = NULL;
+
+void IRAM_ATTR ArmTimer() {
+ esp.arm(Arm);
+}
+
+
+
 void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
+
+  timer = timerBegin(1, 1000, true);
+  timerAttachInterrupt(timer, &ArmTimer, true);
+  timerAlarmWrite(timer, 75000, true);
+  timerAlarmEnable(timer);
   
   camera_config_t config;// Настройка конфигурации камеры
   pinMode(XCLK_GPIO_NUM, OUTPUT);// Установка пина XCLK (тактовый сигнал) в режим вывода
@@ -632,27 +663,44 @@ void setup() {
 
 
 void loop() {
-  esp.arm(Arm);// Установить арм
-  delay(20);
+    switch(Programming){
+      case 0:
+        esp.nav_mode(Nav_state);// Установить навигационный режим
+        delay(20);//50
 
-  esp.nav_mode(Nav_state);// Установить навигационный режим
-  delay(20);//50
+        esp.flight_mode(Flight_state);
+        delay(20);
 
-  esp.flight_mode(Flight_state);
-  delay(20);
+        esp.roll(RollValue);// Установить крен
+        delay(20);//50
 
-  esp.roll(RollValue);// Установить крен
-  delay(20);//50
+        esp.pitch(PitchValue);// Установить тангаж
+        delay(20);
 
-  esp.pitch(PitchValue);// Установить тангаж
-  delay(20);
+        esp.yaw(YawValue);// Установить рысканье
+        delay(20);
 
-  esp.yaw(YawValue);// Установить рысканье
-  delay(20);
+        esp.throttle(ThrottleValue);// Установить дроссель
+        delay(20);
 
-  esp.throttle(ThrottleValue);// Установить дроссель
-  delay(20);
-    
-  
-    
+        break;
+
+      case 1:
+        float height = 0.8;//подъем
+        program.TakeOff(height);
+
+        float angle_l = 90;//разворот на 90 градусов
+        program.TurnLeft(angle_l);
+        delay(20);
+
+        float angle_r = 90;//разворот на 90 градусов
+        program.TurnRight(angle_r);
+        delay(20);
+
+        program.Landing();//посадка
+
+        break;
+    }
   }
+
+

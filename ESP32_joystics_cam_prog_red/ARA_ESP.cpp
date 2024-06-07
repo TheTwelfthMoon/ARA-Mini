@@ -66,7 +66,7 @@ void ARA_ESP::roll(float roll)
   float new_max_roll = 1800;
   float new_min_roll = 1200;
 
-  uint16_t value_roll = (uint16_t)(roll * 100);
+  float value_roll = (float)(roll * 100);
 
   ROLL = (uint16_t)map(value_roll, old_min_roll, old_max_roll, new_min_roll, new_max_roll);
   main_f();
@@ -79,7 +79,7 @@ void ARA_ESP::pitch(float pitch)
   float new_max_pitch = 1800;
   float new_min_pitch = 1200;
 
-  uint16_t value_pitch = (uint16_t)(pitch * 100);
+  float value_pitch = (float)(pitch * 100);
 
   PITCH = (uint16_t)map(value_pitch, old_min_pitch, old_max_pitch, new_min_pitch, new_max_pitch);
   main_f();
@@ -93,7 +93,7 @@ void ARA_ESP::yaw(float yaw)
   float new_max_yaw = 1800;
   float new_min_yaw = 1200;
 
-  uint16_t value_yaw = (uint16_t)(yaw * 100);
+  float value_yaw = (float)(yaw * 100);
 
   YAW = (uint16_t)map(value_yaw, old_min_yaw, old_max_yaw, new_min_yaw, new_max_yaw);
   main_f();
@@ -106,9 +106,9 @@ void ARA_ESP::throttle(float throttle)
   float new_max_throttle = 1800;
   float new_min_throttle = 1000;
 
-  uint16_t value_motor = (uint16_t)(throttle * 100);
+  float value_motor = (float)(throttle * 100);
 
-  THROTTLE = map(value_motor, old_min_throttle, old_max_throttle, new_min_throttle, new_max_throttle);
+  THROTTLE = (uint16_t)map(value_motor, old_min_throttle, old_max_throttle, new_min_throttle, new_max_throttle);
   main_f();
 }
 
